@@ -188,7 +188,7 @@ static void *coalesce(void *bp)
   	return bp;
 }
 
-static void *find_fit(size_t asize)									//힙 시작에서 에필로그 전까지 선형 탐색
+static void *find_fit(size_t asize) //frist_fit							//힙 시작에서 에필로그 전까지 선형 탐색
 {
 	void *bp;
 
@@ -199,6 +199,8 @@ static void *find_fit(size_t asize)									//힙 시작에서 에필로그 전�
 	}
 	return NULL;
 }
+
+
 
 static void place(void *bp, size_t asize) //블록 분할, 할당
 {
@@ -221,22 +223,39 @@ static void place(void *bp, size_t asize) //블록 분할, 할당
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size) // 크기 재조정
-{
-    void *oldptr = ptr; 
-    void *newptr = newptr = mm_malloc(size); //새 블록 newptr 할당
-    
-    if (newptr == NULL)
+void *mm_realloc(void *ptr, size_t size) {		//메모리 재할당 improve raalloc
+    if (ptr == NULL) return mm_malloc(size);	//ptr이 NULL이면 malloc와 같음
+    if (size == 0) {							//size가 0이면 메모리 헤재하고 아무것도 안돌려줌
+        mm_free(ptr);
         return NULL;
+    }
 
-	//이전 크기: oldptr - SIZE_T_SIZE 위치에 저장된 size_t 읽기
-	size_t copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE); 
-    if (size < copySize)
-        copySize = size;
+    void *oldptr = ptr;							//기존 포인터 oldptr로 백업
+    size_t oldsize = GET_SIZE(HDRP(oldptr));	//현재 블록의 전체 크기(=헤더에 기록된 값)
+    size_t newsize = ALIGN(size + DSIZE);  // header + footer(8바이트) 포함 정렬
 
-	//memcpy 로 데이터 복사 (최소 size vs oldsize)
-    memcpy(newptr, oldptr, copySize);
-	//이전 블록 free
-    mm_free(oldptr);
+    // Case 1: 요청 크기가 기존보다 작거나 같으면 그대로 사용
+    if (newsize <= oldsize) { 
+        return ptr;
+    }
+
+    // Case 2: 뒤 블록이 free이고, 현재 크기 + 다음 블록 크기 ≥ 새 요청 크기
+    void *next = NEXT_BLKP(oldptr);
+    if (!GET_ALLOC(HDRP(next)) && (oldsize + GET_SIZE(HDRP(next))) >= newsize) {
+        size_t total = oldsize + GET_SIZE(HDRP(next));
+        PUT(HDRP(oldptr), PACK(total, 1)); //헤더에 병합된 블록 크기를 할당 상태로 기록
+        PUT(FTRP(oldptr), PACK(total, 1)); //풋터에 병합된 블록 크기를 할당 상태로 기록
+        return oldptr;					   //블록 이동 없이 확장 성공 : 기존 포인터 그대로 반환
+    }
+
+    // Case 3: 새로 malloc하고 복사 후 old block free
+    void *newptr = mm_malloc(size);
+    if (newptr == NULL) return NULL; //메모리 부족이면 그냥 NULL 리턴
+
+    size_t copySize = oldsize - DSIZE;  // 실제 payload만 복사
+    if (size < copySize) copySize = size; //요청한 size가 더 작다면, size만큼만 복사
+
+    memmove(newptr, oldptr, copySize); //내용 복사
+    mm_free(oldptr);				   //원래 메모리 필요 없으니 해제
     return newptr;
 }
